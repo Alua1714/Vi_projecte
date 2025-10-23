@@ -9,7 +9,7 @@ MAX_RETRIES = 3
 TIMEOUT = 40
 
 # ---- YEAR RANGE ----
-YEAR_START = 2019
+YEAR_START = 2020
 CURRENT_YEAR = datetime.datetime.now().year   # e.g. 2025
 YEAR_END = CURRENT_YEAR
 
@@ -18,6 +18,7 @@ RESET = False
 
 # --- Fields you want ---
 PRINT_FIELDS = ",".join([
+    "id",                     # <-- added
     "agency",
     "awardeeCountryCode",
     "awardeeStateCode",
@@ -26,7 +27,8 @@ PRINT_FIELDS = ",".join([
     "expDate",
     "date",
     "title",
-    "abstractText"
+    "abstractText",
+    "estimatedTotalAmt"       # <-- added
 ])
 
 def reset_files():
@@ -43,10 +45,12 @@ def load_checkpoint():
     if os.path.exists(CHECKPOINT_FILE):
         with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
+        # keep year inside valid range
         if state.get("year", YEAR_END) > YEAR_END or state["year"] < YEAR_START:
             state["year"] = YEAR_END
             state["offset"] = 1
         return state
+    # default starting state
     return {"year": YEAR_END, "offset": 1, "written_header": os.path.exists(OUTPUT_FILE), "total_saved": 0}
 
 def save_checkpoint(state):
@@ -54,6 +58,7 @@ def save_checkpoint(state):
         json.dump(state, f)
 
 def fetch_page(y, offset):
+    """Fetch one page of results from NSF API."""
     params = {
         "rpp": RPP,
         "offset": offset,
@@ -61,7 +66,8 @@ def fetch_page(y, offset):
         "startDateEnd": f"12/31/{y}",
         "agency": "NSF",
         "awardeeCountryCode": "US",
-        "printFields": PRINT_FIELDS
+        "printFields": PRINT_FIELDS,
+        "orderBy": "date:asc"   # ensures stable pagination
     }
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -76,7 +82,7 @@ def fetch_page(y, offset):
     return []
 
 def append_chunk(df, state, existing_ids):
-    # Filter duplicates
+    """Append new records avoiding duplicates by ID."""
     if "id" in df.columns:
         df = df[~df["id"].isin(existing_ids)]
     if df.empty:
@@ -89,7 +95,7 @@ def append_chunk(df, state, existing_ids):
     return len(df)
 
 def load_existing_ids():
-    """Load existing grant IDs from the CSV (if any) to avoid duplicates."""
+    """Load existing award IDs to avoid re-saving duplicates."""
     if not os.path.exists(OUTPUT_FILE):
         return set()
     try:
@@ -103,10 +109,8 @@ def main():
     print("🚀 Updating NSF Awards (continue → today)")
     print(f"Fields: {PRINT_FIELDS}")
 
-    # Only reset if explicitly asked
     reset_files()
 
-    # Load checkpoint
     state = load_checkpoint()
     print(f"🔁 Resuming from year {state['year']} offset {state['offset']} (saved so far: {state['total_saved']})")
 
